@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b2a1c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>21 點小助手</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2a1c'/%3E%3Ctext x='32' y='44' font-size='30' text-anchor='middle' fill='%23e8c15a' font-family='Arial' font-weight='bold'%3E21%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">21 點小助手</div>
+  <div id="status" class="status idle">未開始</div>
+</header>
+
+<main>
+  <!-- 建議卡 -->
+  <section id="advice" class="advice empty" aria-live="polite">
+    <div class="advice-action" id="adviceAction">—</div>
+    <div class="advice-hand" id="adviceHand">按「開始螢幕分享」後切回遊戲</div>
+    <div class="advice-ev" id="adviceEv"></div>
+    <div class="advice-note" id="adviceNote"></div>
+  </section>
+
+  <!-- 辨識到的牌（可點選修正） -->
+  <section id="readout" class="readout hidden">
+    <div class="row"><span class="lbl">莊家</span><div id="readDealer" class="chips"></div></div>
+    <div class="row"><span class="lbl">你</span><div id="readPlayer" class="chips"></div></div>
+    <div class="hint">點一張牌可以修正點數（會記住，下次自動認得）</div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="live">即時</button>
+    <button class="tab" data-tab="manual">手動輸入</button>
+    <button class="tab" data-tab="chart">策略表</button>
+    <button class="tab" data-tab="help">說明</button>
+  </nav>
+
+  <!-- 即時 -->
+  <section class="panel" id="tab-live">
+    <div class="btnrow">
+      <button id="startBtn" class="btn primary">開始螢幕分享</button>
+      <button id="stopBtn" class="btn" disabled>停止</button>
+      <button id="testBtn" class="btn">測試聲音</button>
+    </div>
+    <div class="opts">
+      <label class="opt"><input type="checkbox" id="optBeep" checked> 提示音</label>
+      <label class="opt"><input type="checkbox" id="optVoice" checked> 語音唸出</label>
+      <label class="opt"><input type="checkbox" id="optPreview"> 顯示擷取畫面</label>
+      <label class="opt vol">音量 <input type="range" id="optVol" min="0" max="1" step="0.05" value="0.8"></label>
+    </div>
+    <div class="soundkey">
+      <span><b class="c-hit">補牌</b> 嗶嗶（高音兩聲）</span>
+      <span><b class="c-stand">不補牌</b> 嘟—（低音一長聲）</span>
+      <span><b class="c-double">加倍</b> 嗶嗶嗶（三聲上揚）</span>
+    </div>
+    <canvas id="preview" class="preview hidden"></canvas>
+    <div id="unsupported" class="warn hidden">
+      這個瀏覽器不支援網頁螢幕分享。請在 iPadOS 27 以上的 Safari 開啟，或改用「手動輸入」。
+    </div>
+  </section>
+
+  <!-- 手動輸入 -->
+  <section class="panel hidden" id="tab-manual">
+    <div class="manual-block">
+      <div class="mlabel">莊家明牌</div>
+      <div id="mDealer" class="keys"></div>
+    </div>
+    <div class="manual-block">
+      <div class="mlabel">你的牌 <span class="muted">（點數，再點花色可選）</span></div>
+      <div id="mRanks" class="keys"></div>
+      <div id="mSuits" class="keys suits"></div>
+      <div class="mhand"><div id="mHand" class="chips"></div><button id="mUndo" class="btn small">退一張</button><button id="mClear" class="btn small">清除</button></div>
+    </div>
+  </section>
+
+  <!-- 策略表 -->
+  <section class="panel hidden" id="tab-chart">
+    <p class="muted">依你的規則算出的最優解。<b class="c-hit">H</b>=補牌、<b class="c-stand">S</b>=不補牌、<b class="c-double">D</b>=加倍。標 * 的格子會因實際是哪幾張牌而不同，以即時計算為準。</p>
+    <div id="chart"></div>
+  </section>
+
+  <!-- 說明 -->
+  <section class="panel hidden" id="tab-help">
+    <h3>iPad 怎麼用</h3>
+    <ol>
+      <li>用 <b>Safari</b> 開這個網頁（iPadOS 27 以上）。</li>
+      <li>把遊戲和 Safari <b>並排放</b>（台前調度或視窗模式），Safari 要留在畫面上，不能縮到背景，不然 iPad 會暫停網頁。</li>
+      <li>按「開始螢幕分享」，系統視窗出現後選擇分享螢幕。</li>
+      <li>回到遊戲照常玩。輪到你（莊家還有一張蓋牌）時，會發出提示音並顯示建議。</li>
+      <li>沒聲音的話：按「測試聲音」、確認 iPad 音量。</li>
+    </ol>
+    <h3>計算用的規則</h3>
+    <ul>
+      <li>6 副牌，每局只扣除當局看得到的牌（不跨局記牌）。</li>
+      <li>莊家 16 點以下補牌、17 點以上停（軟 17 也停）。</li>
+      <li>莊家明牌 A 或 10 點時先查 BLACKJACK，有就立刻結束（所以輪到你時，莊家一定不是 BJ）。</li>
+      <li>只有兩張牌時能加倍，加倍後只補一張；不能分牌。</li>
+      <li>BLACKJACK 1 賠 1.5；五龍（5 張未爆）1 賠 3；777 1 賠 10；同花 6‧7‧8 1 賠 15。</li>
+      <li>加倍後湊成 777 或同花 678，原注＋加倍注都照特殊賠率。</li>
+    </ul>
+    <h3>幾個和一般 21 點不一樣的地方</h3>
+    <ul>
+      <li>因為五龍 1 賠 3，三、四張牌時常常要繼續補，例如四張牌硬 17 點一律補牌。</li>
+      <li>7、7 起手一律加倍（為了 777 的 1 賠 10）。</li>
+      <li>同花 6‧7、6‧8、7‧8 起手都要補（同花 6‧7 對莊家 5、6 要加倍）。</li>
+      <li>兩張軟牌：A,A 到 A,6 一律補；A,7 對 4、5、6 加倍、對 7 停、其餘補；A,8、A,9 停。</li>
+      <li>硬 10、硬 11 對莊家 9 改成補牌（不加倍）；硬 12 只有對 5、6 才停。</li>
+    </ul>
+    <p class="muted">建議旁邊的數字是每 1 單位注碼的期望值（例如 +0.23 代表長期平均每注贏 0.23 注）。21 點時若遊戲自動停牌，就不用理會「補牌」的建議。</p>
+    <p class="muted" id="learnInfo"></p>
+    <button id="resetLearn" class="btn small">清除已學習的牌面</button>
+  </section>
+</main>
+
+<div id="picker" class="picker hidden">
+  <div class="picker-card">
+    <div class="picker-title">這張牌是？</div>
+    <div id="pickerKeys" class="keys"></div>
+    <button id="pickerCancel" class="btn small">取消</button>
+  </div>
+</div>
+
+<video id="video" muted playsinline autoplay class="hidden"></video>
+<canvas id="work" class="hidden"></canvas>
+
+<script src="js/engine.js"></script>
+<script src="js/vision.js"></script>
+<script src="js/templates.js"></script>
+<script src="js/chart-data.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
