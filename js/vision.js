@@ -471,7 +471,10 @@
           }
         }
       }
-      out.totalOk = bestTotal(vals()) === out.ovalP.value;
+      // 點數框顯示軟牌（例如 18/8）時，讀到的牌也必須是軟牌（避免 A,7 被當成 10,8）
+      const v2 = vals(); let hh = 0, aa = false; for (const v of v2) { hh += v; if (v === 1) aa = true; }
+      const softCards = aa && hh + 10 <= 21;
+      out.totalOk = bestTotal(v2) === out.ovalP.value && (!out.ovalP.soft || softCards);
     } else out.totalOk = null;
     if (out.ovalD && out.ovalD.value != null) {
       const dv = RANK_VAL[out.dealer.rank] === 1 ? 11 : RANK_VAL[out.dealer.rank];
@@ -484,7 +487,11 @@
       }
     } else out.dealerOk = null;
     const minScore = Math.min(out.dealer.fixedByTotal ? 1 : out.dealer.rankScore, ...out.player.map(c => c.fixedByTotal ? 1 : c.rankScore));
-    out.consistent = out.totalOk !== false && out.dealerOk !== false && minScore > 0.6;
+    // 遊戲自己顯示的總點數對得上，就算確認（字形分數低也沒關係：讀錯成同點數的牌不影響決策）；
+    // 讀不到點數框時才看字形分數
+    const playerOk = out.totalOk === true || (out.totalOk === null && out.player.every(c => c.fixedByTotal || c.rankScore > 0.6));
+    const dealerOk = out.dealerOk === true || (out.dealerOk === null && (out.dealer.fixedByTotal || out.dealer.rankScore > 0.6));
+    out.consistent = playerOk && dealerOk;
     out.minScore = minScore;
     return out;
   }

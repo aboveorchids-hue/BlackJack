@@ -109,3 +109,5 @@ table.chart td .v { font-size: 9px; opacity: .8; vertical-align: super; }
 .offscreen { position: fixed; left: 0; bottom: 0; width: 2px; height: 2px; opacity: 0.01; pointer-events: none; }
 .diag { margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 1em; }
 .ver { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0; }
+.advice.unconf { border-style: dashed; }
+.advice.unconf .advice-note { color: var(--warn); }

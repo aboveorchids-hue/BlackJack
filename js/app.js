@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '4';
+  const VERSION = '5';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -28,6 +28,8 @@
     T = buildTemplates();
     updateLearnInfo();
   }
+  const learnedTags = new Set();
+  function learnOnce(tag, label, feat) { if (learnedTags.has(tag)) return; learnedTags.add(tag); learn(label, feat); }
   function updateLearnInfo() {
     const c = {}; learned.forEach(l => c[l.label] = (c[l.label] || 0) + 1);
     const s = Object.entries(c).map(([k, v]) => k + '×' + v).join('、');
@@ -38,9 +40,9 @@
   const fmt = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(2);
   const cardText = c => c.r + (c.s ? SUIT_SYM[c.s] : '');
 
-  function renderAdvice(res, player, up) {
+  function renderAdvice(res, player, up, unconfirmed) {
     const box = $('advice');
-    box.className = 'advice ' + (['H', 'S', 'D'].includes(res.best) ? res.best : '');
+    box.className = 'advice ' + (['H', 'S', 'D'].includes(res.best) ? res.best : '') + (unconfirmed ? ' unconf' : '');
     $('adviceAction').textContent = LABEL[res.best] || res.best;
     const t = E.handTotal(player);
     $('adviceHand').textContent = `你 ${player.map(cardText).join(' ')} ＝ ${t.total}${t.soft ? '（軟）' : ''}　｜　莊家 ${up.r === '10' ? '10' : up.r}`;
@@ -51,6 +53,7 @@
     if (ev.double !== undefined) parts.push(`加倍 <b class="${res.best === 'D' ? 'c-double' : ''}">${fmt(ev.double)}</b>`);
     $('adviceEv').innerHTML = parts.length ? '期望值（每注）　' + parts.join('　') : '';
     const notes = [];
+    if (unconfirmed) notes.push('⚠ 讀牌未確認，請看一下下面的牌（點牌可修正）');
     if (res.note) notes.push(res.note);
     if (res.margin !== undefined && res.margin < 0.01 && ['H', 'S', 'D'].includes(res.best)) notes.push('兩個選擇很接近');
     if (player.length === 4 && res.best === 'H') notes.push('再一張不爆＝五龍 1 賠 3');
@@ -76,6 +79,8 @@
   let stream = null, running = false, wakeLock = null;
   let pending = { key: null, n: 0 }, shownKey = null, lastTurnSeen = 0, lastFrameOk = 0, uncertainSince = 0, uncertainCued = null;
   let current = null; // 目前顯示的辨識結果（供修正）
+  let shownConfirmed = true;
+  const VAL = V.RANK_VAL;
   let overrides = { raw: null, map: {} };
   let frameNo = 0;
   let activeTab = 'live';
@@ -239,36 +244,37 @@
     r.player.forEach((c, i) => { if (overrides.map[i]) c.rank = overrides.map[i]; });
     const corrected = Object.keys(overrides.map).length > 0;
 
-    if (!r.consistent && !corrected) {
-      if (!uncertainSince) uncertainSince = now;
-      if (now - uncertainSince > 1200 && activeTab !== 'manual') {
-        current = r;
-        renderReadout(r);
-        renderMessage('U', '讀牌不確定', '請點下方的牌確認點數');
-        setStatus('warn', '讀牌不確定');
-        if (uncertainCued !== raw) { uncertainCued = raw; A.cue('U', { beep: settings.beep, voice: false }); }
-        shownKey = null;
-      }
-      return;
+    const confirmed = r.consistent || corrected;
+    // 被總點數證實、但字形分數偏低的牌 → 學起來（下次就有把握）
+    if (r.consistent && r.totalOk === true) {
+      const lows = r.player.map((c, i) => [c, i]).filter(([c]) => c.fixedByTotal || c.rankScore < 0.75);
+      if (lows.length === 1) learnOnce(raw + '|' + lows[0][1], lows[0][0].rank, lows[0][0].feat);
     }
-    uncertainSince = 0;
-    // 自動修正 → 學起來
-    if (r.fixed && r.fixed.length && r.totalOk) {
-      r.player.forEach(c => { if (c.fixedByTotal && !c.learned) { learn(c.rank, c.feat); c.learned = true; } });
+    if (r.consistent && r.dealerOk === true && (r.dealer.fixedByTotal || r.dealer.rankScore < 0.75) && VAL[r.dealer.rank] !== 10) {
+      learnOnce(raw + '|D', r.dealer.rank, r.dealer.feat);
     }
     const key = r.dealer.rank + '|' + r.player.map(c => c.rank + (c.suit || '')).join(',');
     if (pending.key === key) pending.n++; else pending = { key, n: 1 };
-    if (pending.n < 2 || key === shownKey) return;
-    shownKey = key;
+    // 確認的讀牌連續 2 幀就報；沒確認的多等到 4 幀（避免發牌動畫中途誤報），但一樣給建議
+    if (pending.n < (confirmed ? 2 : 4)) return;
+    if (key === shownKey) {
+      if (confirmed && !shownConfirmed && activeTab !== 'manual') { shownConfirmed = true; showAdvice(r, true, false); }
+      return;
+    }
+    shownKey = key; shownConfirmed = confirmed;
     current = r;
     if (activeTab === 'manual') return;
+    showAdvice(r, confirmed, true);
+  }
+
+  function showAdvice(r, confirmed, withCue) {
     const up = E.card(r.dealer.rank, r.dealer.suit);
     const player = r.player.map(c => E.card(c.rank, c.suit));
     const res = E.analyze(player, up);
-    renderAdvice(res, player, up);
+    renderAdvice(res, player, up, !confirmed);
     renderReadout(r);
-    setStatus('turn', '輪到你');
-    if (['H', 'S', 'D'].includes(res.best)) A.cue(res.best, { beep: settings.beep, voice: settings.voice });
+    setStatus(confirmed ? 'turn' : 'warn', confirmed ? '輪到你' : '輪到你・讀牌未確認');
+    if (withCue && ['H', 'S', 'D'].includes(res.best)) A.cue(res.best, { beep: settings.beep, voice: settings.voice });
   }
 
   function renderReadout(r) {
@@ -306,7 +312,7 @@
           const up = E.card(current.dealer.rank, current.dealer.suit);
           const player = current.player.map(x => E.card(x.rank, x.suit));
           const res = E.analyze(player, up);
-          renderAdvice(res, player, up); renderReadout(current);
+          renderAdvice(res, player, up, false); renderReadout(current); shownConfirmed = true; setStatus('turn', '輪到你');
           shownKey = current.dealer.rank + '|' + current.player.map(x => x.rank + (x.suit || '')).join(',');
           if (['H', 'S', 'D'].includes(res.best)) A.cue(res.best, { beep: settings.beep, voice: settings.voice });
         }
