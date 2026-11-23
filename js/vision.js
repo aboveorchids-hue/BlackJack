@@ -441,6 +441,12 @@
     };
     out.ovalP = readOv(P);
     out.ovalD = readOv(D);
+    // 餘額位置：以玩家點數框為基準（原始畫面座標），換局時也能沿用
+    const po = findOval(small, P);
+    if (po) {
+      out.geom = { ocx: (po.x0 + po.w / 2) * scale, ocy: (po.y0 + po.h / 2) * scale, H: P.h * scale };
+      out.balance = readBalance(getCrop, out.geom, T.digit);
+    }
 
     // 交叉驗證＋自動修正（單張牌換成第二候選）
     out.fixed = [];
@@ -496,7 +502,29 @@
     return out;
   }
 
-  const api = { GEO, NORM_H, STRIP_W, STRIP_H, OVAL_H, RANK_VAL, resize, crop, label, findGroups, findTable, dealerHoleHidden, readStrip, classify, cardStrips, ncc, findOval, ovalGlyphs, parseOval, sample, recognize, bestTotal };
+  // ---------- 讀餘額（左下角金幣旁的數字） ----------
+  // geom：玩家點數框中心與牌高（原始畫面座標）。數字在點數框左下方約 2 個牌高處、金幣圖示右邊。
+  function readBalance(getCrop, geom, digitT) {
+    const { ocx, ocy, H } = geom;
+    const x = ocx - 2.15 * H, y = ocy + 2.36 * H, w = 2.35 * H, h = 0.5 * H;
+    const img = getCrop(x, y, w, h, Math.round(64 * w / h), 64);
+    const gl = ovalGlyphs(img);
+    if (!gl.length) return null;
+    const hMax = Math.max(...gl.map(g => g.box.h));
+    let digits = '';
+    let lastX1 = null;
+    for (const g of gl) {
+      if (g.box.h < hMax * 0.75) continue;                      // 逗號
+      if (lastX1 !== null && g.box.x0 - lastX1 > hMax * 1.2) break; // 數字之後的其他東西
+      const c = classify(g.feat, digitT, t => t.label !== '/');
+      if (!c || c.score < 0.6) return null;
+      digits += c.label; lastX1 = g.box.x1;
+    }
+    if (!digits || digits.length > 12) return null;
+    return Number(digits);
+  }
+
+  const api = { GEO, NORM_H, STRIP_W, STRIP_H, OVAL_H, RANK_VAL, resize, crop, label, findGroups, findTable, dealerHoleHidden, readStrip, classify, cardStrips, ncc, findOval, ovalGlyphs, parseOval, sample, recognize, bestTotal, readBalance };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BJVision = api;
 })(typeof self !== 'undefined' ? self : this);

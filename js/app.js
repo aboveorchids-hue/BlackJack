@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '5';
+  const VERSION = '6';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -12,7 +12,7 @@
     get(k, d) { try { const v = localStorage.getItem('bj_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('bj_' + k, JSON.stringify(v)); } catch (e) { /* 私密模式 */ } },
   };
-  const settings = { beep: store.get('beep', true), voice: store.get('voice', true), preview: store.get('preview', false), vol: store.get('vol', 0.8) };
+  const settings = { beep: store.get('beep', true), voice: store.get('voice', true), preview: store.get('preview', false), vol: store.get('vol', 0.8), betDiv: store.get('betDiv', 45) };
 
   // ---------- 模板（含學習） ----------
   let learned = store.get('learned', []);
@@ -84,6 +84,60 @@
   let overrides = { raw: null, map: {} };
   let frameNo = 0;
   let activeTab = 'live';
+
+  // ---------- 資金：餘額與下注升降級 ----------
+  const MIN_BET = 100;
+  const bank = { auto: null, cand: { v: null, n: 0 }, value: null, source: null, start: null, rec: null, pending: false, geom: null };
+  const fmtN = n => n.toLocaleString('en-US');
+
+  // 自動讀到的餘額：同一個數字連續 3 次才採用（遊戲會有數字跳動的動畫）；暴增暴減要連續 15 次
+  function feedBalance(v) {
+    if (v == null || !isFinite(v)) return;
+    if (bank.cand.v === v) bank.cand.n++; else bank.cand = { v, n: 1 };
+    const big = bank.value != null && (v < bank.value * 0.5 || v > bank.value * 2 + 1000);
+    if (bank.cand.n >= (big ? 15 : 3) && (v !== bank.auto || bank.source !== 'auto')) { bank.auto = v; setBank(v, 'auto'); }
+  }
+
+  // 建議下注＝餘額 ÷ div，取 100 的倍數往下捨（最少 100）。
+  // 升級：餘額夠下一級就升；降級：餘額 < 目前注碼的 40 倍（標準）才降，避免來回跳。
+  function recommendBet(bal, cur) {
+    const div = settings.betDiv;
+    const target = Math.max(MIN_BET, Math.floor(bal / div / MIN_BET) * MIN_BET);
+    if (cur == null || target >= cur) return target;
+    return bal < cur * Math.round(div * 0.89) ? target : cur;   // 標準 45 → 40 倍、穩健 90 → 80 倍、積極 22 → 20 倍
+  }
+
+  function setBank(v, source) {
+    bank.value = v; bank.source = source;
+    if (bank.start == null) bank.start = v;
+    const rec = recommendBet(v, bank.rec);
+    if (rec !== bank.rec) { bank.rec = rec; bank.pending = true; }
+    renderBank();
+    maybeAnnounceBet();
+  }
+
+  function renderBank() {
+    if (bank.value == null) return;
+    $('bankbar').classList.remove('hidden');
+    $('bankVal').textContent = fmtN(bank.value);
+    $('bankSrc').textContent = bank.source === 'manual' ? '（手動）' : '';
+    const pl = bank.value - bank.start;
+    const plEl = $('bankPL');
+    plEl.textContent = (pl > 0 ? '+' : pl < 0 ? '−' : '') + fmtN(Math.abs(pl));
+    plEl.className = pl > 0 ? 'c-hit' : pl < 0 ? 'c-stand' : '';
+    $('bankBet').textContent = fmtN(bank.rec);
+    const units = bank.value / bank.rec;
+    $('bankWarn').textContent = units < 20 ? `⚠ 只剩 ${units < 10 ? units.toFixed(1) : Math.floor(units)} 注，容易先輸光` : '';
+  }
+
+  // 換注提醒只在兩局之間發出，不蓋過補牌／不補的提示音
+  function maybeAnnounceBet() {
+    if (!bank.pending || bank.rec == null) return;
+    if (running && performance.now() - lastTurnSeen < 1500) return;
+    bank.pending = false;
+    const bar = $('bankbar'); bar.classList.remove('flash'); void bar.offsetWidth; bar.classList.add('flash');
+    A.say('B', '下注 ' + bank.rec, { beep: settings.beep, voice: settings.voice });
+  }
 
   // ---------- 畫面方向 ----------
   // iPad 翻轉後，分享出來的畫面可能維持開始分享時的方向（內容變成側躺），甚至被拉長。
@@ -191,6 +245,14 @@
     const now = performance.now();
     let res = runMode(good);
     frameNo++;
+    // 餘額：有牌時順便讀並記住位置；換局沒有牌時用記住的位置讀（frameC 此時還是 good 方向的畫面）
+    if (res.r.ok && res.r.geom) {
+      bank.geom = { g: res.r.geom, mode: good.mode, fw: frameC.width, fh: frameC.height };
+      feedBalance(res.r.balance);
+    } else if (bank.geom && bank.geom.mode === good.mode && bank.geom.fw === frameC.width && bank.geom.fh === frameC.height) {
+      try { feedBalance(V.readBalance(getCrop, bank.geom.g, T.digit)); } catch (e) { /* 忽略 */ }
+    }
+    maybeAnnounceBet();
     if (settings.preview && frameNo % 2 === 0) drawPreview(res.r);
     // 翻轉／畫面尺寸改變後 60 秒內，或 20 秒都沒讀到牌：每幀再多試 3 種方向
     const searching = !res.solid && now - lastTableAt > 1000 && (now - lastChangeAt < 60000 || now - lastTableAt > 20000);
@@ -374,6 +436,7 @@
     const track = stream.getVideoTracks()[0];
     track.addEventListener('ended', stop);
     startAngle = deviceAngle(); angleKey = null; good = { mode: 0, res: 0 }; lastVW = lastVH = 0; lastChangeAt = performance.now();
+    bank.start = bank.value; bank.rec = null; bank.cand = { v: null, n: 0 }; if (bank.value != null) setBank(bank.value, bank.source);
     running = true;
     $('startBtn').disabled = true; $('stopBtn').disabled = false;
     setStatus('on', '偵測中…');
@@ -456,12 +519,23 @@
   function bindOpt(id, key, after) {
     const el = $(id);
     if (el.type === 'checkbox') el.checked = settings[key]; else el.value = settings[key];
-    el.addEventListener('input', () => { settings[key] = el.type === 'checkbox' ? el.checked : +el.value; store.set(key, settings[key]); if (after) after(); });
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => { settings[key] = el.type === 'checkbox' ? el.checked : +el.value; store.set(key, settings[key]); if (after) after(); });
   }
   bindOpt('optBeep', 'beep');
   bindOpt('optVoice', 'voice');
   bindOpt('optPreview', 'preview', () => $('preview').classList.toggle('hidden', !settings.preview));
   bindOpt('optVol', 'vol', () => A.setVolume(settings.vol));
+  bindOpt('optBetDiv', 'betDiv', () => { if (bank.value != null) { bank.rec = null; setBank(bank.value, bank.source); } });
+  $('balApply').onclick = () => {
+    const v = Math.round(Number(String($('balInput').value).replace(/[^0-9]/g, '')));
+    if (!v) return;
+    A.unlock();
+    bank.auto = null; bank.cand = { v: null, n: 0 };
+    setBank(v, 'manual');
+    $('balInput').value = '';
+  };
+  $('balReset').onclick = () => { if (bank.value != null) { bank.start = bank.value; renderBank(); } };
+  $('bankbar').onclick = () => { document.querySelector('.tab[data-tab="live"]').click(); $('balInput').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
   A.setVolume(settings.vol);
   $('preview').classList.toggle('hidden', !settings.preview);
   $('startBtn').onclick = start;

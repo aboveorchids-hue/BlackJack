@@ -111,3 +111,16 @@ table.chart td .v { font-size: 9px; opacity: .8; vertical-align: super; }
 .ver { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0; }
 .advice.unconf { border-style: dashed; }
 .advice.unconf .advice-note { color: var(--warn); }
+.bankbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 8px 12px; margin-bottom: 10px; border-radius: 14px;
+  background: #0e3325; border: 1px solid var(--line); font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bankbar b { color: var(--ink); font-size: 17px; margin-left: 2px; }
+.bankbar small { margin-left: 4px; font-size: 12px; color: var(--muted); }
+.bankbar .bankwarn { color: var(--warn); font-weight: 700; }
+.bankbar.flash { animation: flash 1.2s ease-out 2; }
+@keyframes flash { 0% { border-color: var(--double); box-shadow: 0 0 0 3px rgba(255,204,51,.45); } 100% { border-color: var(--line); box-shadow: none; } }
+.c-gold { color: var(--gold); }
+.bankset { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 12px; font-size: 15px; }
+.bankset select { margin-left: 6px; font-size: 15px; padding: 6px 8px; border-radius: 10px; background: #154431; color: var(--ink); border: 1px solid var(--line); }
+.balin { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.balin input { width: 190px; font-size: 16px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: #0b2a1c; color: var(--ink); }
+.bankbar b.c-hit { color: var(--hit); } .bankbar b.c-stand { color: var(--stand); } .bankbar b.c-double { color: var(--double); }

@@ -45,6 +45,7 @@
     S: () => { tone(392, 0, 0.5, 'triangle', 0.8); },
     D: () => { tone(659, 0, 0.11, 'square', 0.33); tone(880, 0.15, 0.11, 'square', 0.33); tone(1175, 0.3, 0.16, 'square', 0.33); },
     U: () => { tone(220, 0, 0.09, 'sawtooth', 0.25); tone(196, 0.14, 0.12, 'sawtooth', 0.25); },
+    B: () => { tone(784, 0, 0.12, 'sine', 0.55); tone(1046, 0.14, 0.2, 'sine', 0.55); },
   };
   const WORDS = { H: '補牌', S: '不補', D: '加倍', U: '請確認' };
 
@@ -79,7 +80,15 @@
     if (opts.voice && WORDS[action]) setTimeout(() => speak(WORDS[action]), opts.beep !== false ? 450 : 0);
   }
 
+  // 任意文字提示（例如「下注 200」）：先叮咚再唸
+  function say(pattern, text, opts) {
+    opts = opts || {};
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+    if (opts.beep !== false && PATTERNS[pattern]) PATTERNS[pattern]();
+    if (opts.voice) setTimeout(() => speak(text), opts.beep !== false ? 380 : 0);
+  }
+
   function setVolume(v) { volume = v; if (master) master.gain.value = v; }
 
-  root.BJAudio = { unlock, cue, speak, setVolume };
+  root.BJAudio = { unlock, cue, speak, say, setVolume };
 })(typeof self !== 'undefined' ? self : this);
