@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
+  const VERSION = '4';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -88,9 +89,8 @@
   for (const swap of [false, true]) for (const rot of [0, 90, 270, 180]) MODES.push({ rot, swap });
   const RES = [480000, 1100000];
   let good = { mode: 0, res: 0 };        // 最後一次找到牌桌的組合
-  let probe = 0, probeTurn = false;      // 搜尋時輪流試的組合
+  let probe = 0;                         // 搜尋時輪流試的組合
   let lastTableAt = 0, lastVW = 0, lastVH = 0;
-  let cur = { mode: 0, res: 0 };
 
   function drawFrame(mode) {
     let w0 = video.videoWidth, h0 = video.videoHeight;
@@ -127,31 +127,38 @@
   }
 
   // 翻轉、視窗大小改變 → 馬上開始找新方向（先試側轉）
-  function orientationChanged() { lastTableAt = 0; probe = 0; }
+  let lastChangeAt = 0;
+  function orientationChanged() { lastTableAt = 0; probe = 0; lastChangeAt = performance.now(); }
+
+  // iPad 目前的旋轉角度（0/90/180/270）。分享開始後畫面方向通常不會跟著轉，
+  // 所以用「開始時角度 → 目前角度」直接推算要把畫面轉幾度；成功過的組合記起來，下次翻轉立刻套用。
+  function deviceAngle() {
+    let a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle
+      : (typeof window.orientation === 'number' ? window.orientation : 0);
+    return ((a % 360) + 360) % 360;
+  }
+  let startAngle = 0, angleKey = null;
+  const learnedModes = store.get('orientModes', {});
+  const modeIndex = (rot, swap) => MODES.findIndex(m => m.rot === rot && m.swap === swap);
+  function checkAngle() {
+    const a = deviceAngle(), key = startAngle + '>' + a;
+    if (key === angleKey) return;
+    angleKey = key;
+    let m = learnedModes[key];
+    if (m === undefined) m = modeIndex((a - startAngle + 360) % 360, false);
+    if (m < 0) m = 0;
+    good = { mode: m, res: good.res };
+    orientationChanged();
+  }
   window.addEventListener('orientationchange', orientationChanged);
   if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', orientationChanged);
   video.addEventListener('resize', orientationChanged);
 
-  function processFrame() {
-    const vw = video.videoWidth, vh = video.videoHeight;
-    if (!vw || !vh) return;
-    if (vw !== lastVW || vh !== lastVH) { if (lastVW) orientationChanged(); lastVW = vw; lastVH = vh; }
-    const now = performance.now();
-    // 平常用上次成功的組合；超過 1 秒找不到牌桌，就一幀用原組合、一幀試別的組合，輪流
-    const searching = now - lastTableAt > 1000;
-    if (searching && probeTurn) {
-      const all = MODES.length * RES.length;
-      let k = probe % all;
-      if (k === good.mode + good.res * MODES.length) { probe++; k = probe % all; }
-      cur = { mode: k % MODES.length, res: Math.floor(k / MODES.length) };
-      probe++;
-    } else cur = good;
-    probeTurn = searching ? !probeTurn : false;
-
-    drawFrame(MODES[cur.mode]);
+  function runMode(c) {
+    drawFrame(MODES[c.mode]);
     const FW = frameC.width, FH = frameC.height;
     // 工作解析度約 48 萬像素（直式 600 寬、橫式 800 寬）；遊戲視窗很小時用 110 萬像素
-    const WORK = Math.min(FW, Math.round(Math.sqrt(RES[cur.res] * FW / FH)));
+    const WORK = Math.min(FW, Math.round(Math.sqrt(RES[c.res] * FW / FH)));
     const scale = FW / WORK, wh = Math.round(FH / scale);
     if (work.width !== WORK) work.width = WORK;
     if (work.height !== wh) work.height = wh;
@@ -159,21 +166,48 @@
     wctx.drawImage(frameC, 0, 0, WORK, wh);
     const small = wctx.getImageData(0, 0, WORK, wh);
     const r = V.recognize(small, scale, getCrop, T);
+    // 只有「讀到的牌加起來＝遊戲自己顯示的總點數」才算方向正確（被拉長的畫面有時也像牌桌，但讀不出來）
+    const solid = r.ok && (r.totalOk === true || r.consistent === true);
+    return { r, solid, c };
+  }
+
+  function nextProbe() {
+    const all = MODES.length * RES.length;
+    let k = probe++ % all;
+    if (k === good.mode + good.res * MODES.length) k = probe++ % all;
+    return { mode: k % MODES.length, res: Math.floor(k / MODES.length) };
+  }
+
+  function processFrame() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    if (vw !== lastVW || vh !== lastVH) { if (lastVW) orientationChanged(); lastVW = vw; lastVH = vh; }
+    checkAngle();
+    const now = performance.now();
+    let res = runMode(good);
     frameNo++;
-    if (r.ok) {
+    if (settings.preview && frameNo % 2 === 0) drawPreview(res.r);
+    // 翻轉／畫面尺寸改變後 60 秒內，或 20 秒都沒讀到牌：每幀再多試 3 種方向
+    const searching = !res.solid && now - lastTableAt > 1000 && (now - lastChangeAt < 60000 || now - lastTableAt > 20000);
+    if (searching) {
+      for (let i = 0; i < 3 && !res.solid; i++) {
+        const t = runMode(nextProbe());
+        if (t.solid) res = t;
+      }
+    }
+    if (res.solid) {
+      let c = res.c;
+      if (c.res === 1 && res.r.table.player.h > 70) c = { mode: c.mode, res: 0 }; // 牌夠大就用低解析度（省電）
+      good = c;
       lastTableAt = now;
-      // 牌夠大就用低解析度（省電）
-      if (cur.res === 1 && r.table.player.h > 70) cur = { mode: cur.mode, res: 0 };
-      good = cur;
+      if (angleKey && learnedModes[angleKey] !== c.mode) { learnedModes[angleKey] = c.mode; store.set('orientModes', learnedModes); }
     }
     if (frameNo % 6 === 0) {
       const m = MODES[good.mode];
-      $('diag').textContent = `擷取 ${vw}×${vh}・方向 ${m.rot}°${m.swap ? '（對調）' : ''}・${searching ? '搜尋牌桌中…' : '已鎖定'}`;
+      $('diag').textContent = `v${VERSION}・擷取 ${vw}×${vh}・iPad ${deviceAngle()}°（開始 ${startAngle}°）・畫面轉 ${m.rot}°${m.swap ? '（對調）' : ''}・${searching ? '搜尋方向中…' : (now - lastTableAt < 3000 ? '已鎖定' : '待命')}`;
     }
-    if (settings.preview && frameNo % 3 === 0) drawPreview(r);
-    // 搜尋中試錯的組合找不到牌桌時，不要讓它影響畫面
-    if (!r.ok && cur !== good) return;
-    handleResult(r);
+    if (window.__bjDebug) window.__bjDebug.push([window.__frameIdx, MODES[res.c.mode].rot + (MODES[res.c.mode].swap ? 's' : ''), res.c.res, searching, res.r.ok, res.solid, res.r.ok ? res.r.player.map(c => c.rank).join(',') : '']);
+    handleResult(res.r);
   }
 
   function rawKey(r) { return r.dealer.rank + '|' + r.player.map(c => c.rank + (c.suit || '')).join(','); }
@@ -295,6 +329,8 @@
     }
     c.width = Math.round(sw * 2); c.height = Math.round(sh * 2);
     pctx.drawImage(work, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    pctx.fillStyle = '#ffcc33'; pctx.font = 'bold 28px sans-serif';
+    pctx.fillText(`畫面轉 ${MODES[good.mode].rot}°${MODES[good.mode].swap ? '（對調）' : ''}${r.ok ? '・找到牌桌' : '・找不到牌桌'}`, 12, 36);
     if (r.ok) {
       pctx.lineWidth = 3;
       for (const [g, col] of [[r.table.dealer, '#ffcc33'], [r.table.player, '#3ddc84']]) {
@@ -331,6 +367,7 @@
     try { await video.play(); } catch (e) { /* iOS 有時不需要 */ }
     const track = stream.getVideoTracks()[0];
     track.addEventListener('ended', stop);
+    startAngle = deviceAngle(); angleKey = null; good = { mode: 0, res: 0 }; lastVW = lastVH = 0; lastChangeAt = performance.now();
     running = true;
     $('startBtn').disabled = true; $('stopBtn').disabled = false;
     setStatus('on', '偵測中…');
