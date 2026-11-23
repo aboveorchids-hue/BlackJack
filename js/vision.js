@@ -327,7 +327,7 @@
       else if (t.label !== best.label && (!second || s > second.score)) second = { label: t.label, score: s };
     }
     if (!best) return null;
-    return { label: best.label, score: best.score, margin: best.score - (second ? second.score : 0), second: second && second.label };
+    return { label: best.label, score: best.score, margin: best.score - (second ? second.score : 0), second: second && second.label, secondScore: second ? second.score : -1 };
   }
 
   // 由偵測結果切出每張牌的標準化牌角
@@ -420,9 +420,11 @@
       const strip = getCrop(x * scale, y * scale, sw * H * scale, sh * H * scale, STRIP_W, STRIP_H);
       const r = readStrip(strip);
       if (!r) return { fail: true, strip };
-      const rk = classify(r.rankFeat, T.rank);
+      // 先只用內建模板；內建有把握（≥0.9）就不看使用者教的模板，避免一次點錯污染之後的辨識
+      let rk = classify(r.rankFeat, T.rank.filter(t => t.src !== 'learned'));
+      if (rk.score < 0.9 && T.rank.some(t => t.src === 'learned')) rk = classify(r.rankFeat, T.rank);
       const st = classify(r.suitFeat, T.suit, t => t.red === r.red);
-      return { rank: rk.label, rankScore: rk.score, rankMargin: rk.margin, second: rk.second, suit: st ? st.label : null, suitScore: st ? st.score : 0, red: r.red, feat: r.rankFeat, strip };
+      return { rank: rk.label, rankScore: rk.score, rankMargin: rk.margin, second: rk.second, secondScore: rk.secondScore, suit: st ? st.label : null, suitScore: st ? st.score : 0, red: r.red, feat: r.rankFeat, strip };
     };
     const P = tab.player, D = tab.dealer;
     out.dealer = readCard(D.x0, D.y0, D.h);
@@ -454,33 +456,21 @@
     const vals = () => out.player.map(c => RANK_VAL[c.rank]);
     if (out.ovalP && out.ovalP.value != null) {
       if (bestTotal(vals()) !== out.ovalP.value) {
-        let fixedOne = false;
+        // 總點數對不上：只在「某張牌本來就讀得沒把握、第二候選也像樣」時換成第二候選。
+        // 換過的讀法一律標成未確認（仍給建議），也不會拿去學習。
         for (const c of out.player.slice().sort((a, b) => a.rankMargin - b.rankMargin)) {
-          if (!c.second) continue;
+          if (!c.second || c.rankScore >= 0.85 || c.secondScore < 0.5) continue;
           const old = c.rank; c.rank = c.second;
-          if (bestTotal(vals()) === out.ovalP.value) { out.fixed.push({ from: old, to: c.rank }); c.fixedByTotal = true; fixedOne = true; break; }
+          if (bestTotal(vals()) === out.ovalP.value) { out.fixed.push({ from: old, to: c.rank }); c.fixedByTotal = true; break; }
           c.rank = old;
         }
-        if (!fixedOne) {
-          // 再試：在所有點數中找唯一能湊出總點數的單張替換（第二候選不在名單時）
-          const cands = [];
-          out.player.forEach((c, i) => {
-            for (const r of ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10']) {
-              if (RANK_VAL[r] === RANK_VAL[c.rank]) continue;
-              const v = vals(); v[i] = RANK_VAL[r];
-              if (bestTotal(v) === out.ovalP.value) cands.push({ i, r, margin: c.rankMargin });
-            }
-          });
-          cands.sort((a, b) => a.margin - b.margin);
-          if (cands.length && (cands.length === 1 || cands[0].margin < 0.15)) {
-            const c = out.player[cands[0].i]; out.fixed.push({ from: c.rank, to: cands[0].r }); c.rank = cands[0].r; c.fixedByTotal = true;
-          }
-        }
       }
-      // 點數框顯示軟牌（例如 18/8）時，讀到的牌也必須是軟牌（避免 A,7 被當成 10,8）
+      // 軟／硬也要一致：點數框有斜線（例如 13/3）＝軟牌；沒有斜線＝硬牌（21 點除外）。
+      // 避免 A,2（軟 13）被當成 8,5（硬 13），或 A,7 被當成 10,8
       const v2 = vals(); let hh = 0, aa = false; for (const v of v2) { hh += v; if (v === 1) aa = true; }
       const softCards = aa && hh + 10 <= 21;
-      out.totalOk = bestTotal(v2) === out.ovalP.value && (!out.ovalP.soft || softCards);
+      const bt = bestTotal(v2);
+      out.totalOk = bt === out.ovalP.value && (bt === 21 || !!out.ovalP.soft === softCards);
     } else out.totalOk = null;
     if (out.ovalD && out.ovalD.value != null) {
       const dv = RANK_VAL[out.dealer.rank] === 1 ? 11 : RANK_VAL[out.dealer.rank];
@@ -495,7 +485,8 @@
     const minScore = Math.min(out.dealer.fixedByTotal ? 1 : out.dealer.rankScore, ...out.player.map(c => c.fixedByTotal ? 1 : c.rankScore));
     // 遊戲自己顯示的總點數對得上，就算確認（字形分數低也沒關係：讀錯成同點數的牌不影響決策）；
     // 讀不到點數框時才看字形分數
-    const playerOk = out.totalOk === true || (out.totalOk === null && out.player.every(c => c.fixedByTotal || c.rankScore > 0.6));
+    const playerFixed = out.player.some(c => c.fixedByTotal);
+    const playerOk = !playerFixed && (out.totalOk === true || (out.totalOk === null && out.player.every(c => c.rankScore > 0.6)));
     const dealerOk = out.dealerOk === true || (out.dealerOk === null && (out.dealer.fixedByTotal || out.dealer.rankScore > 0.6));
     out.consistent = playerOk && dealerOk;
     out.minScore = minScore;

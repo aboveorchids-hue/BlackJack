@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '6';
+  const VERSION = '7';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -16,6 +16,8 @@
 
   // ---------- 模板（含學習） ----------
   let learned = store.get('learned', []);
+  // v7：舊版會自動學習，可能把讀錯的牌學起來 → 清掉一次
+  if (store.get('learnVer', 0) < 7) { learned = []; store.set('learned', learned); store.set('learnVer', 7); }
   let T = buildTemplates();
   function buildTemplates() { return { rank: TPL.rank.concat(learned), suit: TPL.suit, digit: TPL.digit }; }
   function learn(label, feat) {
@@ -307,14 +309,7 @@
     const corrected = Object.keys(overrides.map).length > 0;
 
     const confirmed = r.consistent || corrected;
-    // 被總點數證實、但字形分數偏低的牌 → 學起來（下次就有把握）
-    if (r.consistent && r.totalOk === true) {
-      const lows = r.player.map((c, i) => [c, i]).filter(([c]) => c.fixedByTotal || c.rankScore < 0.75);
-      if (lows.length === 1) learnOnce(raw + '|' + lows[0][1], lows[0][0].rank, lows[0][0].feat);
-    }
-    if (r.consistent && r.dealerOk === true && (r.dealer.fixedByTotal || r.dealer.rankScore < 0.75) && VAL[r.dealer.rank] !== 10) {
-      learnOnce(raw + '|D', r.dealer.rank, r.dealer.feat);
-    }
+    // 不再自動學習：只有使用者點牌修正才會學（自動學習曾把讀錯的牌學起來，越錯越多）
     const key = r.dealer.rank + '|' + r.player.map(c => c.rank + (c.suit || '')).join(',');
     if (pending.key === key) pending.n++; else pending = { key, n: 1 };
     // 確認的讀牌連續 2 幀就報；沒確認的多等到 4 幀（避免發牌動畫中途誤報），但一樣給建議
