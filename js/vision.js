@@ -17,6 +17,7 @@
   const STRIP_W = 70;   // 約 0.35H
   const STRIP_H = 118;  // 約 0.59H
   const RANK_TW = 20, RANK_TH = 30, SUIT_TW = 20, SUIT_TH = 20;
+  const STRIP_LEFT = 0.035;  // 牌角往牌左緣外多切的寬度（牌高的比例）
 
   // ---------- 基本影像工具 ----------
   function resize(img, w, h) {
@@ -258,7 +259,8 @@
     }
     const { lab, comps } = label(ink, w, h);
     // 排除貼邊的細長陰影線、太小的雜點
-    const ok = comps.filter(c => c.area >= 12 && !(c.w <= 4 && c.h > h * 0.4) && c.x0 > 0 && c.x1 < w - 1);
+    // 濾掉：太小的雜點、貼左右邊的東西（前一張／後一張牌）、細長的牌邊陰影線（不會濾掉 10 的「1」：它只在上半部）
+    const ok = comps.filter(c => c.area >= 12 && !(c.w <= 5 && c.h > h * 0.6) && c.x0 > 0 && c.x1 < w - 1);
     const rankC = ok.filter(c => c.cy < 70 && c.y0 < 50 && c.h >= 18);
     const suitC = ok.filter(c => c.cy >= 62 && c.y0 >= 50 && c.h >= 10);
     if (!rankC.length || !suitC.length) return null;
@@ -401,6 +403,12 @@
 
   // ---------- 整合：讀一個畫面 ----------
   const RANK_VAL = { A: 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, J: 10, Q: 10, K: 10 };
+  // 牌的點數加總（含軟／硬）是否與點數框一致：有斜線（13/3）＝軟牌；沒斜線＝硬牌（21 點除外）
+  function totalMatches(vals, oval) {
+    let h = 0, a = false; for (const v of vals) { h += v; if (v === 1) a = true; }
+    const soft = a && h + 10 <= 21, bt = soft ? h + 10 : h;
+    return bt === oval.value && (bt === 21 || !!oval.soft === soft);
+  }
   function bestTotal(vals) {
     let h = 0, a = false; for (const v of vals) { h += v; if (v === 1) a = true; }
     return a && h + 10 <= 21 ? h + 10 : h;
@@ -420,16 +428,16 @@
       const strip = getCrop(x * scale, y * scale, sw * H * scale, sh * H * scale, STRIP_W, STRIP_H);
       const r = readStrip(strip);
       if (!r) return { fail: true, strip };
-      // 先只用內建模板；內建有把握（≥0.9）就不看使用者教的模板，避免一次點錯污染之後的辨識
-      let rk = classify(r.rankFeat, T.rank.filter(t => t.src !== 'learned'));
-      if (rk.score < 0.9 && T.rank.some(t => t.src === 'learned')) rk = classify(r.rankFeat, T.rank);
+      // 只用內建模板（全部取自遊戲實際字形）；不再使用學習來的模板，避免讀錯被學起來
+      const rk = classify(r.rankFeat, T.rank.filter(t => t.src !== 'learned'));
       const st = classify(r.suitFeat, T.suit, t => t.red === r.red);
       return { rank: rk.label, rankScore: rk.score, rankMargin: rk.margin, second: rk.second, secondScore: rk.secondScore, suit: st ? st.label : null, suitScore: st ? st.score : 0, red: r.red, feat: r.rankFeat, strip };
     };
     const P = tab.player, D = tab.dealer;
-    out.dealer = readCard(D.x0, D.y0, D.h);
+    // 牌角從牌的左緣再往左一點開始切（STRIP_LEFT），寬的「10」才不會被切掉一半
+    out.dealer = readCard(D.x0 - STRIP_LEFT * D.h, D.y0, D.h);
     out.player = [];
-    for (let k = 0; k < tab.nP; k++) out.player.push(readCard(P.x0 + k * GEO.stepP * P.h, P.y0, P.h));
+    for (let k = 0; k < tab.nP; k++) out.player.push(readCard(P.x0 + k * GEO.stepP * P.h - STRIP_LEFT * P.h, P.y0, P.h));
 
     // 點數框
     const readOv = (grp) => {
@@ -455,22 +463,24 @@
     if (out.player.some(c => c.fail) || out.dealer.fail) { out.consistent = false; return out; }
     const vals = () => out.player.map(c => RANK_VAL[c.rank]);
     if (out.ovalP && out.ovalP.value != null) {
-      if (bestTotal(vals()) !== out.ovalP.value) {
-        // 總點數對不上：只在「某張牌本來就讀得沒把握、第二候選也像樣」時換成第二候選。
-        // 換過的讀法一律標成未確認（仍給建議），也不會拿去學習。
-        for (const c of out.player.slice().sort((a, b) => a.rankMargin - b.rankMargin)) {
-          if (!c.second || c.rankScore >= 0.85 || c.secondScore < 0.5) continue;
-          const old = c.rank; c.rank = c.second;
-          if (bestTotal(vals()) === out.ovalP.value) { out.fixed.push({ from: old, to: c.rank }); c.fixedByTotal = true; break; }
-          c.rank = old;
+      if (!totalMatches(vals(), out.ovalP)) {
+        // 總點數對不上：如果只有一張牌讀得沒把握（< 0.85）、其他牌都很有把握，
+        // 就用「遊戲顯示的總點數 − 其他牌」推算這張牌的點數（必須唯一、且軟／硬一致）。
+        const weak = out.player.map((c, i) => [c, i]).filter(([c]) => c.rankScore < 0.85);
+        if (weak.length === 1) {
+          const [c, i] = weak[0];
+          const hits = [];
+          for (let v = 1; v <= 10; v++) { const t = vals(); t[i] = v; if (totalMatches(t, out.ovalP)) hits.push(v); }
+          if (hits.length === 1) {
+            const nr = hits[0] === 1 ? 'A' : String(hits[0]);
+            out.fixed.push({ from: c.rank, to: nr, inferred: true });
+            c.readAs = c.rank; c.rank = nr; c.inferred = true;
+          }
         }
       }
       // 軟／硬也要一致：點數框有斜線（例如 13/3）＝軟牌；沒有斜線＝硬牌（21 點除外）。
       // 避免 A,2（軟 13）被當成 8,5（硬 13），或 A,7 被當成 10,8
-      const v2 = vals(); let hh = 0, aa = false; for (const v of v2) { hh += v; if (v === 1) aa = true; }
-      const softCards = aa && hh + 10 <= 21;
-      const bt = bestTotal(v2);
-      out.totalOk = bt === out.ovalP.value && (bt === 21 || !!out.ovalP.soft === softCards);
+      out.totalOk = totalMatches(vals(), out.ovalP);
     } else out.totalOk = null;
     if (out.ovalD && out.ovalD.value != null) {
       const dv = RANK_VAL[out.dealer.rank] === 1 ? 11 : RANK_VAL[out.dealer.rank];
@@ -482,11 +492,11 @@
         out.dealer.rank = nr; out.dealer.fixedByTotal = true; out.dealerOk = true;
       }
     } else out.dealerOk = null;
-    const minScore = Math.min(out.dealer.fixedByTotal ? 1 : out.dealer.rankScore, ...out.player.map(c => c.fixedByTotal ? 1 : c.rankScore));
+    const minScore = Math.min(out.dealer.fixedByTotal ? 1 : out.dealer.rankScore, ...out.player.map(c => c.inferred ? 1 : c.rankScore));
     // 遊戲自己顯示的總點數對得上，就算確認（字形分數低也沒關係：讀錯成同點數的牌不影響決策）；
     // 讀不到點數框時才看字形分數
-    const playerFixed = out.player.some(c => c.fixedByTotal);
-    const playerOk = !playerFixed && (out.totalOk === true || (out.totalOk === null && out.player.every(c => c.rankScore > 0.6)));
+    // 推算出來的牌：其他牌都很有把握、總點數也是遊戲顯示的 → 視為確認（畫面標「推算」）
+    const playerOk = out.totalOk === true || (out.totalOk === null && out.player.every(c => c.rankScore > 0.6));
     const dealerOk = out.dealerOk === true || (out.dealerOk === null && (out.dealer.fixedByTotal || out.dealer.rankScore > 0.6));
     out.consistent = playerOk && dealerOk;
     out.minScore = minScore;

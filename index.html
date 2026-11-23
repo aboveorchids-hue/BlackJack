@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>21 點小助手</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2a1c'/%3E%3Ctext x='32' y='44' font-size='30' text-anchor='middle' fill='%23e8c15a' font-family='Arial' font-weight='bold'%3E21%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="css/app.css?v=7">
+<link rel="stylesheet" href="css/app.css?v=8">
 </head>
 <body>
 <header class="top">
-  <div class="brand">21 點小助手 <span class="ver">v7</span></div>
+  <div class="brand">21 點小助手 <span class="ver">v8</span></div>
   <div id="status" class="status idle">未開始</div>
 </header>
 
@@ -36,7 +36,7 @@
   <section id="readout" class="readout hidden">
     <div class="row"><span class="lbl">莊家</span><div id="readDealer" class="chips"></div></div>
     <div class="row"><span class="lbl">你</span><div id="readPlayer" class="chips"></div></div>
-    <div class="hint">點一張牌可以修正點數（會記住，下次自動認得）</div>
+    <div class="hint">點一張牌可修正這一手・藍虛框＝用遊戲總點數推算 <button id="reportBtn" class="btn small hidden">回報讀錯畫面</button></div>
   </section>
 
   <nav class="tabs" role="tablist">
@@ -74,6 +74,7 @@
       <span><b class="c-stand">不補牌</b> 嘟—（低音一長聲）</span>
       <span><b class="c-double">加倍</b> 嗶嗶嗶（三聲上揚）</span>
       <span><b class="c-gold">換注</b> 叮咚＋「下注 200」</span>
+      <span><b style="color:var(--warn)">讀牌不確定</b> 先低音「嘟嘟」再出建議音，語音「請確認，…」</span>
     </div>
     <div id="diag" class="diag"></div>
     <canvas id="preview" class="preview hidden"></canvas>
@@ -111,7 +112,7 @@
       <li>按「開始螢幕分享」，系統視窗出現後選擇分享螢幕。</li>
       <li>回到遊戲照常玩。輪到你（莊家還有一張蓋牌）時，會發出提示音並顯示建議。</li>
       <li>中途翻轉 iPad 沒關係，會自動重新找畫面方向（約 1 秒）；按鈕下方的灰字會顯示目前擷取的方向。</li>
-      <li>讀到的牌加起來和遊戲顯示的總點數一致就算確認；萬一確認不了，仍會給建議並標示「⚠ 讀牌未確認」，看一眼牌就好。</li>
+      <li>讀到的牌加起來和遊戲顯示的總點數一致就算確認；只有一張讀不清楚時，會用「總點數 − 其他牌」推算（藍虛框）。萬一確認不了，仍會給建議並標示「⚠ 讀牌未確認」，提示音也會先多兩聲低音「嘟嘟」。</li>
       <li>沒聲音的話：按「測試聲音」、確認 iPad 音量。</li>
     </ol>
     <h3>下注升降級</h3>
@@ -141,8 +142,7 @@
     </ul>
     <p class="muted">照這套規則、每手都照建議打，長期期望值約每注 <b>+7%</b>（電腦模擬 20 萬局：+7.35% ±0.56%），主要來自五龍 1 賠 3。前提是遊戲真的照說明隨機發牌。</p>
     <p class="muted">建議旁邊的數字是每 1 單位注碼的期望值（例如 +0.23 代表長期平均每注贏 0.23 注）。21 點時若遊戲自動停牌，就不用理會「補牌」的建議。</p>
-    <p class="muted" id="learnInfo"></p>
-    <button id="resetLearn" class="btn small">清除已學習的牌面</button>
+    <p class="muted">讀牌未確認時，下方會出現「回報讀錯畫面」，按下去可以把那一刻的畫面存下來或分享，傳給開發者修正。</p>
   </section>
 </main>
 
@@ -157,11 +157,11 @@
 <video id="video" muted playsinline autoplay class="offscreen"></video>
 <canvas id="work" class="hidden"></canvas>
 
-<script src="js/engine.js?v=7"></script>
-<script src="js/vision.js?v=7"></script>
-<script src="js/templates.js?v=7"></script>
-<script src="js/chart-data.js?v=7"></script>
-<script src="js/audio.js?v=7"></script>
-<script src="js/app.js?v=7"></script>
+<script src="js/engine.js?v=8"></script>
+<script src="js/vision.js?v=8"></script>
+<script src="js/templates.js?v=8"></script>
+<script src="js/chart-data.js?v=8"></script>
+<script src="js/audio.js?v=8"></script>
+<script src="js/app.js?v=8"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '7';
+  const VERSION = '8';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -15,28 +15,9 @@
   const settings = { beep: store.get('beep', true), voice: store.get('voice', true), preview: store.get('preview', false), vol: store.get('vol', 0.8), betDiv: store.get('betDiv', 45) };
 
   // ---------- 模板（含學習） ----------
-  let learned = store.get('learned', []);
-  // v7：舊版會自動學習，可能把讀錯的牌學起來 → 清掉一次
-  if (store.get('learnVer', 0) < 7) { learned = []; store.set('learned', learned); store.set('learnVer', 7); }
-  let T = buildTemplates();
-  function buildTemplates() { return { rank: TPL.rank.concat(learned), suit: TPL.suit, digit: TPL.digit }; }
-  function learn(label, feat) {
-    if (!feat || !feat.v) return;
-    learned.push({ label, v: Array.from(feat.v).map(x => Math.round(x * 100) / 100), aspect: feat.aspect, src: 'learned' });
-    const count = {}, keep = [];
-    for (let i = learned.length - 1; i >= 0; i--) { const l = learned[i].label; count[l] = (count[l] || 0) + 1; if (count[l] <= 4) keep.unshift(learned[i]); }
-    learned = keep;
-    store.set('learned', learned);
-    T = buildTemplates();
-    updateLearnInfo();
-  }
-  const learnedTags = new Set();
-  function learnOnce(tag, label, feat) { if (learnedTags.has(tag)) return; learnedTags.add(tag); learn(label, feat); }
-  function updateLearnInfo() {
-    const c = {}; learned.forEach(l => c[l.label] = (c[l.label] || 0) + 1);
-    const s = Object.entries(c).map(([k, v]) => k + '×' + v).join('、');
-    $('learnInfo').textContent = s ? '已學習的牌面：' + s : '尚未學習任何牌面（遇到認錯時點牌修正即可）。';
-  }
+  // 不再學習牌面（v8）：曾因學到讀錯的牌而越錯越多。清掉舊資料，只用內建模板。
+  store.set('learned', []);
+  const T = { rank: TPL.rank, suit: TPL.suit, digit: TPL.digit };
 
   // ---------- 建議卡 ----------
   const fmt = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(2);
@@ -82,6 +63,7 @@
   let pending = { key: null, n: 0 }, shownKey = null, lastTurnSeen = 0, lastFrameOk = 0, uncertainSince = 0, uncertainCued = null;
   let current = null; // 目前顯示的辨識結果（供修正）
   let shownConfirmed = true;
+  let lastGeo = null;
   const VAL = V.RANK_VAL;
   let overrides = { raw: null, map: {} };
   let frameNo = 0;
@@ -257,7 +239,9 @@
     maybeAnnounceBet();
     if (settings.preview && frameNo % 2 === 0) drawPreview(res.r);
     // 翻轉／畫面尺寸改變後 60 秒內，或 20 秒都沒讀到牌：每幀再多試 3 種方向
-    const searching = !res.solid && now - lastTableAt > 1000 && (now - lastChangeAt < 60000 || now - lastTableAt > 20000);
+    // 這個方向已經清楚看到牌桌（兩排牌＋莊家蓋牌、牌數幾何吻合）→ 方向沒問題，只是讀牌不確定，不必再試別的方向
+    const tableClear = res.r.ok && res.r.hidden && res.r.geomErr < 0.1 && !res.r.dealer.fail && !res.r.player.some(c => c.fail);
+    const searching = !res.solid && !tableClear && now - lastTableAt > 1000 && (now - lastChangeAt < 60000 || now - lastTableAt > 20000);
     if (searching) {
       for (let i = 0; i < 3 && !res.solid; i++) {
         const t = runMode(nextProbe());
@@ -286,7 +270,7 @@
     const turn = r.ok && r.hidden && r.geomErr < 0.15 && !r.dealer.fail && !r.player.some(c => c.fail);
     if (r.ok) lastFrameOk = now;
     if (!turn) {
-      pending = { key: null, n: 0 };
+      pending = { key: null, n: 0 }; lastGeo = null;
       if (now - lastTurnSeen > 1200) {
         if (shownKey !== null || uncertainSince) {
           shownKey = null; uncertainSince = 0;
@@ -301,6 +285,13 @@
       return;
     }
     lastTurnSeen = now;
+    // 牌還在動（發牌、牌往左移）時不判斷：牌組位置連續兩幀幾乎不變才讀
+    const P = r.table.player, D = r.table.dealer;
+    const g = { px: P.x0, pw: P.w, py: P.y0, ph: P.h, dx: D.x0, dw: D.w };
+    const tol = Math.max(1.5, 0.02 * P.h);
+    const settled = lastGeo && Object.keys(g).every(k => Math.abs(g[k] - lastGeo[k]) <= tol);
+    lastGeo = g;
+    if (!settled) { pending = { key: null, n: 0 }; return; }
     const raw = rawKey(r);
     if (overrides.raw !== raw) overrides = { raw, map: {} };
     // 套用使用者修正
@@ -309,7 +300,6 @@
     const corrected = Object.keys(overrides.map).length > 0;
 
     const confirmed = r.consistent || corrected;
-    // 不再自動學習：只有使用者點牌修正才會學（自動學習曾把讀錯的牌學起來，越錯越多）
     const key = r.dealer.rank + '|' + r.player.map(c => c.rank + (c.suit || '')).join(',');
     if (pending.key === key) pending.n++; else pending = { key, n: 1 };
     // 確認的讀牌連續 2 幀就報；沒確認的多等到 4 幀（避免發牌動畫中途誤報），但一樣給建議
@@ -331,14 +321,36 @@
     renderAdvice(res, player, up, !confirmed);
     renderReadout(r);
     setStatus(confirmed ? 'turn' : 'warn', confirmed ? '輪到你' : '輪到你・讀牌未確認');
-    if (withCue && ['H', 'S', 'D'].includes(res.best)) A.cue(res.best, { beep: settings.beep, voice: settings.voice });
+    // 不確定時換提示音：先低音「嘟嘟」再出建議音，語音說「請確認」
+    if (withCue && ['H', 'S', 'D'].includes(res.best)) A.cue(res.best, { beep: settings.beep, voice: settings.voice, uncertain: !confirmed });
+    if (withCue && !confirmed) takeSnapshot(r);
+  }
+
+  // ---------- 回報：保存最近一次「讀牌未確認」時的原始畫面 ----------
+  let snap = null; // { file, name }
+  function takeSnapshot(r) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = frameC.width; c.height = frameC.height;
+      c.getContext('2d').drawImage(frameC, 0, 0);
+      const t = new Date(), pad = n => String(n).padStart(2, '0');
+      const read = r.dealer.rank + r.dealer.suit + '_' + r.player.map(x => (x.readAs || x.rank) + x.suit).join('-');
+      const name = `bj_${t.getMonth() + 1}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}_${read}_框${r.ovalP ? r.ovalP.text.replace('/', 's') : 'x'}.jpg`;
+      c.toBlob(b => { if (b) { snap = { file: new File([b], name, { type: 'image/jpeg' }), name }; $('reportBtn').classList.remove('hidden'); } }, 'image/jpeg', 0.92);
+    } catch (e) { /* 忽略 */ }
+  }
+  function shareSnapshot() {
+    if (!snap) return;
+    const data = { files: [snap.file], title: '21 點小助手讀錯畫面' };
+    if (navigator.canShare && navigator.canShare(data)) navigator.share(data).catch(() => {});
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(snap.file); a.download = snap.name; a.click(); }
   }
 
   function renderReadout(r) {
     $('readout').classList.remove('hidden');
     const chip = (c, pos) => {
       const el = document.createElement('button');
-      el.className = 'chip' + (c.suit && RED[c.suit] ? ' red' : '') + (c.rankScore < 0.75 && !c.fixedByTotal ? ' low' : '') + (c.fixedByTotal || overrides.map[pos] ? ' fixed' : '');
+      el.className = 'chip' + (c.suit && RED[c.suit] ? ' red' : '') + (c.rankScore < 0.75 && !c.inferred && !c.fixedByTotal ? ' low' : '') + (c.inferred || c.fixedByTotal ? ' inferred' : '') + (overrides.map[pos] ? ' fixed' : '');
       el.textContent = c.rank + (c.suit ? SUIT_SYM[c.suit] : '');
       el.onclick = () => openPicker(pos, c);
       return el;
@@ -359,8 +371,7 @@
       b.onclick = () => {
         $('picker').classList.add('hidden');
         if (rk === c.rank) return;
-        overrides.map[pos] = rk;
-        learn(rk, c.feat);
+        overrides.map[pos] = rk;   // 只修正這一手，不學習
         shownKey = null; pending = { key: null, n: 0 };
         // 立即用修正後的牌重算
         if (current) {
@@ -534,18 +545,17 @@
   A.setVolume(settings.vol);
   $('preview').classList.toggle('hidden', !settings.preview);
   $('startBtn').onclick = start;
+  $('reportBtn').onclick = shareSnapshot;
   $('stopBtn').onclick = stop;
   $('testBtn').onclick = () => {
     A.unlock();
     const seq = ['H', 'S', 'D'];
     seq.forEach((a, i) => setTimeout(() => A.cue(a, { beep: settings.beep, voice: settings.voice }), i * 1600));
   };
-  $('resetLearn').onclick = () => { learned = []; store.set('learned', learned); T = buildTemplates(); updateLearnInfo(); };
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) $('unsupported').classList.remove('hidden');
 
   buildManual();
   buildChart();
-  updateLearnInfo();
 
   // 測試用：讓自動化測試能餵圖片
   window.__bj = { handleResult, recognizeImage: (small, scale, crop) => V.recognize(small, scale, crop, T), E, settings };

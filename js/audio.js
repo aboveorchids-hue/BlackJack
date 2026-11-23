@@ -44,7 +44,7 @@
     H: () => { tone(1046, 0, 0.12, 'square', 0.35); tone(1046, 0.2, 0.12, 'square', 0.35); },
     S: () => { tone(392, 0, 0.5, 'triangle', 0.8); },
     D: () => { tone(659, 0, 0.11, 'square', 0.33); tone(880, 0.15, 0.11, 'square', 0.33); tone(1175, 0.3, 0.16, 'square', 0.33); },
-    U: () => { tone(220, 0, 0.09, 'sawtooth', 0.25); tone(196, 0.14, 0.12, 'sawtooth', 0.25); },
+    U: () => { tone(233, 0, 0.13, 'sawtooth', 0.32); tone(185, 0.18, 0.16, 'sawtooth', 0.32); },
     B: () => { tone(784, 0, 0.12, 'sine', 0.55); tone(1046, 0.14, 0.2, 'sine', 0.55); },
   };
   const WORDS = { H: '補牌', S: '不補', D: '加倍', U: '請確認' };
@@ -76,8 +76,13 @@
   function cue(action, opts) {
     opts = opts || {};
     if (ctx && ctx.state === 'suspended') ctx.resume();
-    if (opts.beep !== false && PATTERNS[action]) PATTERNS[action]();
-    if (opts.voice && WORDS[action]) setTimeout(() => speak(WORDS[action]), opts.beep !== false ? 450 : 0);
+    // 不確定：先低音「嘟嘟」警示，再出同樣的建議音；語音加上「請確認」
+    const lead = opts.uncertain && opts.beep !== false ? 0.45 : 0;
+    if (opts.beep !== false) {
+      if (opts.uncertain) PATTERNS.U();
+      if (PATTERNS[action]) setTimeout(() => PATTERNS[action](), lead * 1000);
+    }
+    if (opts.voice && WORDS[action]) setTimeout(() => speak((opts.uncertain ? '請確認，' : '') + WORDS[action]), opts.beep !== false ? 450 + lead * 1000 : 0);
   }
 
   // 任意文字提示（例如「下注 200」）：先叮咚再唸
