@@ -77,11 +77,41 @@
   let current = null; // 目前顯示的辨識結果（供修正）
   let overrides = { raw: null, map: {} };
   let frameNo = 0;
-  let workPixels = 480000, lastTableAt = 0;
   let activeTab = 'live';
 
+  // ---------- 畫面方向 ----------
+  // iPad 翻轉後，分享出來的畫面可能維持開始分享時的方向（內容變成側躺），甚至被拉長。
+  // 所以把每一幀先畫到 frameC（可旋轉／可對調長寬），找不到牌桌時輪流試各種方向。
+  const frameC = document.createElement('canvas');
+  const fctx = frameC.getContext('2d');
+  const MODES = [];
+  for (const swap of [false, true]) for (const rot of [0, 90, 270, 180]) MODES.push({ rot, swap });
+  const RES = [480000, 1100000];
+  let good = { mode: 0, res: 0 };        // 最後一次找到牌桌的組合
+  let probe = 0, probeTurn = false;      // 搜尋時輪流試的組合
+  let lastTableAt = 0, lastVW = 0, lastVH = 0;
+  let cur = { mode: 0, res: 0 };
+
+  function drawFrame(mode) {
+    let w0 = video.videoWidth, h0 = video.videoHeight;
+    if (mode.swap) { const t = w0; w0 = h0; h0 = t; }
+    const s = Math.min(1, 2400 / Math.max(w0, h0));
+    const dw = Math.round(w0 * s), dh = Math.round(h0 * s);
+    const side = mode.rot === 90 || mode.rot === 270;
+    const fw = side ? dh : dw, fh = side ? dw : dh;
+    if (frameC.width !== fw) frameC.width = fw;
+    if (frameC.height !== fh) frameC.height = fh;
+    fctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (mode.rot === 90) { fctx.translate(fw, 0); fctx.rotate(Math.PI / 2); }
+    else if (mode.rot === 180) { fctx.translate(fw, fh); fctx.rotate(Math.PI); }
+    else if (mode.rot === 270) { fctx.translate(0, fh); fctx.rotate(-Math.PI / 2); }
+    fctx.imageSmoothingEnabled = true; fctx.imageSmoothingQuality = 'high';
+    fctx.drawImage(video, 0, 0, dw, dh);
+    fctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
   function getCrop(x, y, w, h, ow, oh) {
-    const vw = video.videoWidth, vh = video.videoHeight;
+    const vw = frameC.width, vh = frameC.height;
     // 夾在畫面內（Safari 的 drawImage 來源超出範圍會失敗）
     let sx = Math.max(0, x), sy = Math.max(0, y);
     let sw = Math.min(vw - sx, w - (sx - x)), sh = Math.min(vh - sy, h - (sy - y));
@@ -91,33 +121,58 @@
     if (sw > 1 && sh > 1) {
       const dx = (sx - x) / w * ow, dy = (sy - y) / h * oh;
       cctx.imageSmoothingEnabled = true; cctx.imageSmoothingQuality = 'high';
-      cctx.drawImage(video, sx, sy, sw, sh, dx, dy, sw / w * ow, sh / h * oh);
+      cctx.drawImage(frameC, sx, sy, sw, sh, dx, dy, sw / w * ow, sh / h * oh);
     }
     return cctx.getImageData(0, 0, ow, oh);
   }
 
+  // 翻轉、視窗大小改變 → 馬上開始找新方向（先試側轉）
+  function orientationChanged() { lastTableAt = 0; probe = 0; }
+  window.addEventListener('orientationchange', orientationChanged);
+  if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', orientationChanged);
+  video.addEventListener('resize', orientationChanged);
+
   function processFrame() {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return;
-    // 工作解析度約 48 萬像素（直式 600 寬、橫式 800 寬）；遊戲視窗很小時自動改用較高解析度
-    const WORK = Math.min(vw, Math.round(Math.sqrt(workPixels * vw / vh)));
-    const scale = vw / WORK, wh = Math.round(vh / scale);
+    if (vw !== lastVW || vh !== lastVH) { if (lastVW) orientationChanged(); lastVW = vw; lastVH = vh; }
+    const now = performance.now();
+    // 平常用上次成功的組合；超過 1 秒找不到牌桌，就一幀用原組合、一幀試別的組合，輪流
+    const searching = now - lastTableAt > 1000;
+    if (searching && probeTurn) {
+      const all = MODES.length * RES.length;
+      let k = probe % all;
+      if (k === good.mode + good.res * MODES.length) { probe++; k = probe % all; }
+      cur = { mode: k % MODES.length, res: Math.floor(k / MODES.length) };
+      probe++;
+    } else cur = good;
+    probeTurn = searching ? !probeTurn : false;
+
+    drawFrame(MODES[cur.mode]);
+    const FW = frameC.width, FH = frameC.height;
+    // 工作解析度約 48 萬像素（直式 600 寬、橫式 800 寬）；遊戲視窗很小時用 110 萬像素
+    const WORK = Math.min(FW, Math.round(Math.sqrt(RES[cur.res] * FW / FH)));
+    const scale = FW / WORK, wh = Math.round(FH / scale);
     if (work.width !== WORK) work.width = WORK;
     if (work.height !== wh) work.height = wh;
     wctx.imageSmoothingEnabled = true; wctx.imageSmoothingQuality = 'medium';
-    wctx.drawImage(video, 0, 0, WORK, wh);
+    wctx.drawImage(frameC, 0, 0, WORK, wh);
     const small = wctx.getImageData(0, 0, WORK, wh);
     const r = V.recognize(small, scale, getCrop, T);
     frameNo++;
-    const now = performance.now();
     if (r.ok) {
       lastTableAt = now;
-      if (workPixels > 480000 && r.table.player.h > 70) workPixels = 480000;   // 牌夠大就降回來
-    } else if (now - lastTableAt > 2500) {
-      workPixels = workPixels > 480000 ? 480000 : 1100000;                    // 找不到就輪流試高／低解析度
-      lastTableAt = now;
+      // 牌夠大就用低解析度（省電）
+      if (cur.res === 1 && r.table.player.h > 70) cur = { mode: cur.mode, res: 0 };
+      good = cur;
+    }
+    if (frameNo % 6 === 0) {
+      const m = MODES[good.mode];
+      $('diag').textContent = `擷取 ${vw}×${vh}・方向 ${m.rot}°${m.swap ? '（對調）' : ''}・${searching ? '搜尋牌桌中…' : '已鎖定'}`;
     }
     if (settings.preview && frameNo % 3 === 0) drawPreview(r);
+    // 搜尋中試錯的組合找不到牌桌時，不要讓它影響畫面
+    if (!r.ok && cur !== good) return;
     handleResult(r);
   }
 
@@ -253,6 +308,7 @@
   function loop() {
     if (!running) return;
     const t0 = performance.now();
+    if (video.paused && video.srcObject) video.play().catch(() => {});
     try { processFrame(); } catch (e) { console.error(e); }
     const dt = performance.now() - t0;
     loopTimer = setTimeout(loop, Math.max(40, 170 - dt));

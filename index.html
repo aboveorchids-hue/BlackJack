@@ -56,6 +56,7 @@
       <span><b class="c-stand">不補牌</b> 嘟—（低音一長聲）</span>
       <span><b class="c-double">加倍</b> 嗶嗶嗶（三聲上揚）</span>
     </div>
+    <div id="diag" class="diag"></div>
     <canvas id="preview" class="preview hidden"></canvas>
     <div id="unsupported" class="warn hidden">
       這個瀏覽器不支援網頁螢幕分享。請在 iPadOS 27 以上的 Safari 開啟，或改用「手動輸入」。
@@ -90,6 +91,7 @@
       <li>把遊戲和 Safari <b>並排放</b>（台前調度或視窗模式），Safari 要留在畫面上，不能縮到背景，不然 iPad 會暫停網頁。</li>
       <li>按「開始螢幕分享」，系統視窗出現後選擇分享螢幕。</li>
       <li>回到遊戲照常玩。輪到你（莊家還有一張蓋牌）時，會發出提示音並顯示建議。</li>
+      <li>中途翻轉 iPad 沒關係，會自動重新找畫面方向（約 1 秒）；按鈕下方的灰字會顯示目前擷取的方向。</li>
       <li>沒聲音的話：按「測試聲音」、確認 iPad 音量。</li>
     </ol>
     <h3>計算用的規則</h3>
@@ -124,7 +126,7 @@
   </div>
 </div>
 
-<video id="video" muted playsinline autoplay class="hidden"></video>
+<video id="video" muted playsinline autoplay class="offscreen"></video>
 <canvas id="work" class="hidden"></canvas>
 
 <script src="js/engine.js"></script>
