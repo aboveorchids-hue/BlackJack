@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>21 點小助手</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2a1c'/%3E%3Ctext x='32' y='44' font-size='30' text-anchor='middle' fill='%23e8c15a' font-family='Arial' font-weight='bold'%3E21%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="css/app.css?v=8">
+<link rel="stylesheet" href="css/app.css?v=9">
 </head>
 <body>
 <header class="top">
-  <div class="brand">21 點小助手 <span class="ver">v8</span></div>
+  <div class="brand">21 點小助手 <span class="ver">v9</span></div>
   <div id="status" class="status idle">未開始</div>
 </header>
 
@@ -21,6 +21,7 @@
     <span>餘額 <b id="bankVal">—</b><small id="bankSrc"></small></span>
     <span>本次 <b id="bankPL">—</b></span>
     <span>建議下注 <b id="bankBet" class="c-double">—</b></span>
+    <span>破產機率 <b id="bankRuin">—</b></span>
     <span id="bankWarn" class="bankwarn"></span>
   </section>
 
@@ -60,13 +61,6 @@
       <label class="opt vol">音量 <input type="range" id="optVol" min="0" max="1" step="0.05" value="0.8"></label>
     </div>
     <div class="bankset">
-      <label>下注升降級
-        <select id="optBetDiv">
-          <option value="45">標準：餘額約 1/45</option>
-          <option value="90">穩健：餘額約 1/90</option>
-          <option value="22">積極：餘額約 1/22</option>
-        </select>
-      </label>
       <span class="balin"><input id="balInput" type="number" inputmode="numeric" placeholder="讀不到時手動輸入餘額"><button id="balApply" class="btn small">套用</button><button id="balReset" class="btn small">本次歸零</button></span>
     </div>
     <div class="soundkey">
@@ -115,13 +109,14 @@
       <li>讀到的牌加起來和遊戲顯示的總點數一致就算確認；只有一張讀不清楚時，會用「總點數 − 其他牌」推算（藍虛框）。萬一確認不了，仍會給建議並標示「⚠ 讀牌未確認」，提示音也會先多兩聲低音「嘟嘟」。</li>
       <li>沒聲音的話：按「測試聲音」、確認 iPad 音量。</li>
     </ol>
-    <h3>下注升降級</h3>
+    <h3>下注建議（破產機率 ≤ 1% 下成長最快）</h3>
     <ul>
       <li>自動讀遊戲左下角的金幣餘額（讀不到時可在「即時」頁手動輸入）。</li>
-      <li>建議下注＝餘額 ÷ 45，取 100 的倍數往下捨（最少 100）。例如餘額 9,000 → 下注 200。</li>
-      <li>升級：餘額夠下一級就升。降級：餘額掉到目前注碼的 40 倍以下才降，避免來回跳。</li>
-      <li>要換注時會「叮咚」並唸「下注 ○○○」（只在兩局之間提醒，不會蓋過補牌建議）。</li>
-      <li>餘額不到 20 注時會顯示警告：這時就算照最優解打，也很容易先輸光。</li>
+      <li>建議下注＝0.0517 ×（餘額 − 2,500），取 100 的倍數往下捨，最少 100。例如餘額 10,000 → 300、20,000 → 900、50,000 → 2,400。</li>
+      <li>0.0517（約 1/19）是依本遊戲規則算出的 Kelly 比例，長期成長最快；先保留 2,500 不拿來算，是為了讓「只要注碼超過 100，最終破產機率都 ≤ 1%」。</li>
+      <li>「破產機率」是從現在的餘額起、一直照建議打，最後輸到不夠下 100 的機率。餘額太低時連最低注 100 都會超過 1%，這時照下 100，並顯示要到多少餘額才會降到 1%。</li>
+      <li>這種下注成長快但起伏大：餘額常會先跌一段再漲，屬正常現象。</li>
+      <li>要換注時會「叮咚」並唸「下注 ○○○」（只在兩局之間提醒）。</li>
     </ul>
     <h3>計算用的規則</h3>
     <ul>
@@ -157,11 +152,11 @@
 <video id="video" muted playsinline autoplay class="offscreen"></video>
 <canvas id="work" class="hidden"></canvas>
 
-<script src="js/engine.js?v=8"></script>
-<script src="js/vision.js?v=8"></script>
-<script src="js/templates.js?v=8"></script>
-<script src="js/chart-data.js?v=8"></script>
-<script src="js/audio.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/engine.js?v=9"></script>
+<script src="js/vision.js?v=9"></script>
+<script src="js/templates.js?v=9"></script>
+<script src="js/chart-data.js?v=9"></script>
+<script src="js/audio.js?v=9"></script>
+<script src="js/app.js?v=9"></script>
 </body>
 </html>

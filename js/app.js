@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '8';
+  const VERSION = '9';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -12,7 +12,7 @@
     get(k, d) { try { const v = localStorage.getItem('bj_' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('bj_' + k, JSON.stringify(v)); } catch (e) { /* 私密模式 */ } },
   };
-  const settings = { beep: store.get('beep', true), voice: store.get('voice', true), preview: store.get('preview', false), vol: store.get('vol', 0.8), betDiv: store.get('betDiv', 45) };
+  const settings = { beep: store.get('beep', true), voice: store.get('voice', true), preview: store.get('preview', false), vol: store.get('vol', 0.8) };
 
   // ---------- 模板（含學習） ----------
   // 不再學習牌面（v8）：曾因學到讀錯的牌而越錯越多。清掉舊資料，只用內建模板。
@@ -69,7 +69,7 @@
   let frameNo = 0;
   let activeTab = 'live';
 
-  // ---------- 資金：餘額與下注升降級 ----------
+  // ---------- 資金：餘額與下注建議（破產機率 ≤ 1% 下成長最快） ----------
   const MIN_BET = 100;
   const bank = { auto: null, cand: { v: null, n: 0 }, value: null, source: null, start: null, rec: null, pending: false, geom: null };
   const fmtN = n => n.toLocaleString('en-US');
@@ -82,14 +82,36 @@
     if (bank.cand.n >= (big ? 15 : 3) && (v !== bank.auto || bank.source !== 'auto')) { bank.auto = v; setBank(v, 'auto'); }
   }
 
-  // 建議下注＝餘額 ÷ div，取 100 的倍數往下捨（最少 100）。
-  // 升級：餘額夠下一級就升；降級：餘額 < 目前注碼的 40 倍（標準）才降，避免來回跳。
+  // 下注＝「保留金＋Kelly」：bet = Kelly 比例 × (餘額 − 保留金)，取 100 的倍數往下捨（最少 100）。
+  //  - Kelly 比例 0.0517（約 1/19）：依本遊戲規則 2,400 萬手模擬的輸贏分布算出、長期成長最快的比例
+  //  - 保留金 2,500：搜尋得到「只要注碼超過 100，最終破產機率都 ≤ 1%」的最小值（再留一點安全餘裕）
+  //  - 降注有 50 的緩衝，避免在門檻附近來回跳
+  const KELLY = 0.05174, RESERVE = 2500, RUIN_LIMIT = 0.01;
   function recommendBet(bal, cur) {
-    const div = settings.betDiv;
-    const target = Math.max(MIN_BET, Math.floor(bal / div / MIN_BET) * MIN_BET);
+    const raw = KELLY * (bal - RESERVE);
+    const target = Math.max(MIN_BET, Math.floor(raw / MIN_BET) * MIN_BET);
     if (cur == null || target >= cur) return target;
-    return bal < cur * Math.round(div * 0.89) ? target : cur;   // 標準 45 → 40 倍、穩健 90 → 80 倍、積極 22 → 20 倍
+    return raw < cur - 50 ? target : cur;
   }
+
+  // 照上面的規則「一直玩下去」的最終破產機率（餘額 < 100）。每個點各模擬 10 萬次；中間用對數內插。
+  const RUIN_TABLE = [[200, 0.82713], [300, 0.74971], [500, 0.6171], [700, 0.50376], [1000, 0.37325], [1500, 0.22979], [2000, 0.14014], [2500, 0.08585], [3000, 0.05558], [3500, 0.03485], [4000, 0.02351], [4600, 0.01555], [5000, 0.01157], [5500, 0.00957], [6100, 0.00783], [6400, 0.00674], [7000, 0.00664], [8000, 0.00458], [10000, 0.00345], [12000, 0.0027], [15000, 0.00212], [20000, 0.00157], [30000, 0.00101], [50000, 0.00048], [100000, 0.0003]];
+  function ruinProb(bal) {
+    if (bal < 100) return 1;
+    const T = RUIN_TABLE;
+    if (bal <= T[0][0]) return 1 + (T[0][1] - 1) * (bal - 100) / (T[0][0] - 100);
+    for (let i = 1; i < T.length; i++) {
+      if (bal <= T[i][0]) {
+        const [b0, p0] = T[i - 1], [b1, p1] = T[i], t = (bal - b0) / (b1 - b0);
+        return Math.exp(Math.log(p0) + t * (Math.log(p1) - Math.log(p0)));
+      }
+    }
+    const [bn, pn] = T[T.length - 1];
+    return pn * Math.pow(bn / bal, 0.68);   // 更高的餘額：依尾端趨勢外推
+  }
+  // 破產機率降到 1% 以下需要的餘額
+  const SAFE_BAL = (() => { for (let b = 100; b < 50000; b += 50) if (ruinProb(b) <= RUIN_LIMIT) return b; return 50000; })();
+  const fmtPct = p => p >= 0.1 ? Math.round(p * 100) + '%' : p >= 0.01 ? (p * 100).toFixed(1) + '%' : p >= 0.0001 ? (p * 100).toFixed(2) + '%' : '<0.01%';
 
   function setBank(v, source) {
     bank.value = v; bank.source = source;
@@ -110,8 +132,11 @@
     plEl.textContent = (pl > 0 ? '+' : pl < 0 ? '−' : '') + fmtN(Math.abs(pl));
     plEl.className = pl > 0 ? 'c-hit' : pl < 0 ? 'c-stand' : '';
     $('bankBet').textContent = fmtN(bank.rec);
-    const units = bank.value / bank.rec;
-    $('bankWarn').textContent = units < 20 ? `⚠ 只剩 ${units < 10 ? units.toFixed(1) : Math.floor(units)} 注，容易先輸光` : '';
+    const pr = ruinProb(bank.value);
+    const rEl = $('bankRuin');
+    rEl.textContent = fmtPct(pr);
+    rEl.className = pr > RUIN_LIMIT ? 'c-stand' : 'c-hit';
+    $('bankWarn').textContent = pr > RUIN_LIMIT ? `⚠ 最低注 100 也超過 1%，餘額到 ${fmtN(Math.ceil(SAFE_BAL / 100) * 100)} 才會降到 1% 以下` : '';
   }
 
   // 換注提醒只在兩局之間發出，不蓋過補牌／不補的提示音
@@ -531,7 +556,6 @@
   bindOpt('optVoice', 'voice');
   bindOpt('optPreview', 'preview', () => $('preview').classList.toggle('hidden', !settings.preview));
   bindOpt('optVol', 'vol', () => A.setVolume(settings.vol));
-  bindOpt('optBetDiv', 'betDiv', () => { if (bank.value != null) { bank.rec = null; setBank(bank.value, bank.source); } });
   $('balApply').onclick = () => {
     const v = Math.round(Number(String($('balInput').value).replace(/[^0-9]/g, '')));
     if (!v) return;
