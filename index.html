@@ -7,11 +7,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>21 點小助手</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b2a1c'/%3E%3Ctext x='32' y='44' font-size='30' text-anchor='middle' fill='%23e8c15a' font-family='Arial' font-weight='bold'%3E21%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="css/app.css?v=9">
+<link rel="stylesheet" href="css/app.css?v=10">
 </head>
 <body>
 <header class="top">
-  <div class="brand">21 點小助手 <span class="ver">v9</span></div>
+  <div class="brand">21 點小助手 <span class="ver">v10</span></div>
   <div id="status" class="status idle">未開始</div>
 </header>
 
@@ -116,7 +116,7 @@
       <li>0.0517（約 1/19）是依本遊戲規則算出的 Kelly 比例，長期成長最快；先保留 2,500 不拿來算，是為了讓「只要注碼超過 100，最終破產機率都 ≤ 1%」。</li>
       <li>「破產機率」是從現在的餘額起、一直照建議打，最後輸到不夠下 100 的機率。餘額太低時連最低注 100 都會超過 1%，這時照下 100，並顯示要到多少餘額才會降到 1%。</li>
       <li>這種下注成長快但起伏大：餘額常會先跌一段再漲，屬正常現象。</li>
-      <li>要換注時會「叮咚」並唸「下注 ○○○」（只在兩局之間提醒）。</li>
+      <li>要換注時會「叮咚」並唸「下注 ○○○」：每局結束、牌收掉後立刻判斷，一定在下一局發牌前提醒。放籌碼時餘額先扣掉不算輸，不會因此改建議。</li>
     </ul>
     <h3>計算用的規則</h3>
     <ul>
@@ -152,11 +152,11 @@
 <video id="video" muted playsinline autoplay class="offscreen"></video>
 <canvas id="work" class="hidden"></canvas>
 
-<script src="js/engine.js?v=9"></script>
-<script src="js/vision.js?v=9"></script>
-<script src="js/templates.js?v=9"></script>
-<script src="js/chart-data.js?v=9"></script>
-<script src="js/audio.js?v=9"></script>
-<script src="js/app.js?v=9"></script>
+<script src="js/engine.js?v=10"></script>
+<script src="js/vision.js?v=10"></script>
+<script src="js/templates.js?v=10"></script>
+<script src="js/chart-data.js?v=10"></script>
+<script src="js/audio.js?v=10"></script>
+<script src="js/app.js?v=10"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   const E = window.BJEngine, V = window.BJVision, TPL = window.BJTemplates, CH = window.BJChart, A = window.BJAudio;
-  const VERSION = '9';
+  const VERSION = '10';
   const $ = id => document.getElementById(id);
   const SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
   const RED = { H: 1, D: 1 };
@@ -113,13 +113,28 @@
   const SAFE_BAL = (() => { for (let b = 100; b < 50000; b += 50) if (ruinProb(b) <= RUIN_LIMIT) return b; return 50000; })();
   const fmtPct = p => p >= 0.1 ? Math.round(p * 100) + '%' : p >= 0.01 ? (p * 100).toFixed(1) + '%' : p >= 0.0001 ? (p * 100).toFixed(2) + '%' : '<0.01%';
 
+  // 真正資金＝顯示餘額＋桌上籌碼。遊戲一放注就先從餘額扣掉，所以「餘額變少」其實是放籌碼（下注／加倍），
+  // 輸贏要等這局結束、牌收掉才確定。建議下注只在「桌上沒牌且沒有未結算的籌碼」時重算 → 一定在下一局發牌前提醒。
+  let chips = 0, cardsVisible = false, noCardFrames = 0;
   function setBank(v, source) {
+    if (source === 'auto' && bank.value != null && bank.source === 'auto' && v < bank.value) chips += bank.value - v;
+    if (source === 'manual') chips = 0;
     bank.value = v; bank.source = source;
     if (bank.start == null) bank.start = v;
-    const rec = recommendBet(v, bank.rec);
+    if (!cardsVisible && chips === 0) recomputeBet();
+    renderBank();
+  }
+  function recomputeBet() {
+    if (bank.value == null) return;
+    const rec = recommendBet(bank.value, bank.rec);
     if (rec !== bank.rec) { bank.rec = rec; bank.pending = true; }
     renderBank();
     maybeAnnounceBet();
+  }
+  // 每幀呼叫：桌上連續 3 幀沒牌＝這局結束（牌收掉了）→ 籌碼已結算，重算建議並立刻提醒
+  function trackCards(onTable) {
+    if (onTable) { cardsVisible = true; noCardFrames = 0; return; }
+    if (++noCardFrames === 3 && cardsVisible) { cardsVisible = false; chips = 0; recomputeBet(); }
   }
 
   function renderBank() {
@@ -142,7 +157,7 @@
   // 換注提醒只在兩局之間發出，不蓋過補牌／不補的提示音
   function maybeAnnounceBet() {
     if (!bank.pending || bank.rec == null) return;
-    if (running && performance.now() - lastTurnSeen < 1500) return;
+    if (cardsVisible) return;   // 還在這一局裡：等牌收掉再提醒
     bank.pending = false;
     const bar = $('bankbar'); bar.classList.remove('flash'); void bar.offsetWidth; bar.classList.add('flash');
     A.say('B', '下注 ' + bank.rec, { beep: settings.beep, voice: settings.voice });
@@ -254,6 +269,7 @@
     const now = performance.now();
     let res = runMode(good);
     frameNo++;
+    trackCards(res.r.ok);
     // 餘額：有牌時順便讀並記住位置；換局沒有牌時用記住的位置讀（frameC 此時還是 good 方向的畫面）
     if (res.r.ok && res.r.geom) {
       bank.geom = { g: res.r.geom, mode: good.mode, fw: frameC.width, fh: frameC.height };
@@ -261,7 +277,6 @@
     } else if (bank.geom && bank.geom.mode === good.mode && bank.geom.fw === frameC.width && bank.geom.fh === frameC.height) {
       try { feedBalance(V.readBalance(getCrop, bank.geom.g, T.digit)); } catch (e) { /* 忽略 */ }
     }
-    maybeAnnounceBet();
     if (settings.preview && frameNo % 2 === 0) drawPreview(res.r);
     // 翻轉／畫面尺寸改變後 60 秒內，或 20 秒都沒讀到牌：每幀再多試 3 種方向
     // 這個方向已經清楚看到牌桌（兩排牌＋莊家蓋牌、牌數幾何吻合）→ 方向沒問題，只是讀牌不確定，不必再試別的方向
@@ -467,7 +482,7 @@
     const track = stream.getVideoTracks()[0];
     track.addEventListener('ended', stop);
     startAngle = deviceAngle(); angleKey = null; good = { mode: 0, res: 0 }; lastVW = lastVH = 0; lastChangeAt = performance.now();
-    bank.start = bank.value; bank.rec = null; bank.cand = { v: null, n: 0 }; if (bank.value != null) setBank(bank.value, bank.source);
+    bank.start = bank.value; bank.rec = null; bank.cand = { v: null, n: 0 }; chips = 0; cardsVisible = false; noCardFrames = 0; if (bank.value != null) setBank(bank.value, bank.source);
     running = true;
     $('startBtn').disabled = true; $('stopBtn').disabled = false;
     setStatus('on', '偵測中…');
@@ -561,7 +576,7 @@
     if (!v) return;
     A.unlock();
     bank.auto = null; bank.cand = { v: null, n: 0 };
-    setBank(v, 'manual');
+    setBank(v, 'manual'); recomputeBet();
     $('balInput').value = '';
   };
   $('balReset').onclick = () => { if (bank.value != null) { bank.start = bank.value; renderBank(); } };
